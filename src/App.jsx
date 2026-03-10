@@ -123,7 +123,7 @@ Respond ONLY with a JSON object, no preamble or markdown:
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-haiku-3-20250122",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
       messages: [{ role: "user", content: prompt }],
     }),
