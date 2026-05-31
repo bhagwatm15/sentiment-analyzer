@@ -366,7 +366,7 @@ export default function App() {
           </main>
         )}
         <footer style={{ textAlign: "center", color: "#94a3b8", fontSize: "11px", marginTop: "40px", letterSpacing: "0.05em" }}>
-          Powered by Reddit · Hacker News · DEV.to · Claude — Built as a portfolio project
+          Built as a portfolio project
         </footer>
       </div>
     </div>
