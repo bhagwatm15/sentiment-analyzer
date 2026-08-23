@@ -9,7 +9,7 @@ async function fetchRedditPosts(query, limit = 20) {
     try {
       const url = sub === "all"
         ? `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&limit=${limit}&t=year`
-        : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=10&t=year`;
+        : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=${limit}&t=year`;
       const res = await fetch(url, { headers: { "Accept": "application/json" } });
       const data = await res.json();
       const posts = data?.data?.children?.map(p => ({
