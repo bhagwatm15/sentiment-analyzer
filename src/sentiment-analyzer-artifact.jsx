@@ -2,14 +2,14 @@ import { useState } from "react";
 
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 
-async function fetchRedditPosts(query, limit = 20) {
+async function fetchRedditPosts(query, limit = 100) {
   const results = [];
   const subreddits = ["all", "browsers", "software"];
   for (const sub of subreddits) {
     try {
       const url = sub === "all"
         ? `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&limit=${limit}&t=year`
-        : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=10&t=year`;
+        : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=${limit}&t=year`;
       const res = await fetch(url, { headers: { "Accept": "application/json" } });
       const data = await res.json();
       const posts = data?.data?.children?.map(p => ({
@@ -23,7 +23,7 @@ async function fetchRedditPosts(query, limit = 20) {
   return results;
 }
 
-async function fetchHackerNewsPosts(query, limit = 20) {
+async function fetchHackerNewsPosts(query, limit = 100) {
   try {
     const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment,story&hitsPerPage=${limit}`;
     const res = await fetch(url);
@@ -36,7 +36,7 @@ async function fetchHackerNewsPosts(query, limit = 20) {
   } catch { return []; }
 }
 
-async function fetchDevToPosts(query, limit = 10) {
+async function fetchDevToPosts(query, limit = 100) {
   try {
     const url = `https://dev.to/api/articles?tag=${encodeURIComponent(query.split(" ")[0].toLowerCase())}&per_page=${limit}`;
     const res = await fetch(url);
@@ -63,7 +63,7 @@ function formatPosts(posts) {
     .filter(p => p.title || p.text)
     .map(p => `[${p.source}] ${p.title}${p.text ? ": " + p.text : ""}`)
     .join("\n")
-    .slice(0, 4000);
+    .slice(0, 20000);
 }
 
 async function analyzeWithClaude(productA, productB, dataA, dataB, focus) {
