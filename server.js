@@ -21,8 +21,21 @@ async function fetchRedditPosts(query, limit) {
           "User-Agent": "sentiment-analyzer/1.0 (local dev server)",
         },
       });
-      const data = await response.json();
-      for (const p of data?.data?.children || []) {
+      const bodyText = await response.text();
+      if (!response.ok) {
+        console.error(`[api/reddit] r/${sub} -> HTTP ${response.status}: ${bodyText.slice(0, 300)}`);
+        continue;
+      }
+      let data;
+      try {
+        data = JSON.parse(bodyText);
+      } catch {
+        console.error(`[api/reddit] r/${sub} -> non-JSON response: ${bodyText.slice(0, 300)}`);
+        continue;
+      }
+      const children = data?.data?.children || [];
+      console.log(`[api/reddit] r/${sub} -> HTTP ${response.status}, ${children.length} raw hits`);
+      for (const p of children) {
         if (seen.has(p.data.id)) continue;
         seen.add(p.data.id);
         results.push({
@@ -32,8 +45,11 @@ async function fetchRedditPosts(query, limit) {
           text: (p.data.selftext || "").slice(0, 400),
         });
       }
-    } catch {}
+    } catch (e) {
+      console.error(`[api/reddit] r/${sub} -> fetch threw: ${e.message}`);
+    }
   }
+  console.log(`[api/reddit] query="${query}" -> ${results.length} posts after dedup`);
   return results;
 }
 
@@ -41,14 +57,28 @@ async function fetchHackerNewsPosts(query, limit) {
   try {
     const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment,story&hitsPerPage=${limit}`;
     const response = await fetch(url);
-    const data = await response.json();
-    return (data?.hits || []).map((h) => ({
+    const bodyText = await response.text();
+    if (!response.ok) {
+      console.error(`[api/hn] HTTP ${response.status}: ${bodyText.slice(0, 300)}`);
+      return [];
+    }
+    let data;
+    try {
+      data = JSON.parse(bodyText);
+    } catch {
+      console.error(`[api/hn] non-JSON response: ${bodyText.slice(0, 300)}`);
+      return [];
+    }
+    const results = (data?.hits || []).map((h) => ({
       site: "Hacker News",
       source: "Hacker News",
       title: h.title || h.story_title || "",
       text: (h.comment_text || h.story_text || "").replace(/<[^>]+>/g, "").slice(0, 400),
     }));
-  } catch {
+    console.log(`[api/hn] query="${query}" -> HTTP ${response.status}, ${results.length} posts (nbHits=${data?.nbHits})`);
+    return results;
+  } catch (e) {
+    console.error(`[api/hn] fetch threw: ${e.message}`);
     return [];
   }
 }
