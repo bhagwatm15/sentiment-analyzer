@@ -11,7 +11,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment,story&hitsPerPage=${limit}`;
+    // "(comment,story)" is an OR across tags in Algolia's syntax; a bare
+    // "comment,story" means AND, which no item can ever satisfy (nothing is
+    // both a comment and a story) and silently returns zero hits forever.
+    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=${encodeURIComponent("(comment,story)")}&hitsPerPage=${limit}`;
     const response = await fetch(url);
     const bodyText = await response.text();
 
