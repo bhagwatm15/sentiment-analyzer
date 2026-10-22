@@ -1,43 +1,23 @@
 import { useState } from "react";
 
+// Reddit and Hacker News don't send CORS headers for third-party origins, so
+// these calls are proxied through our own Vercel functions (api/reddit.js,
+// api/hn.js) instead of hitting reddit.com / hn.algolia.com from the browser.
 async function fetchRedditPosts(query, limit = 100) {
-  const results = [];
-  const seen = new Set();
-  const subreddits = ["all", "browsers", "software"];
-  for (const sub of subreddits) {
-    try {
-      const url =
-        sub === "all"
-          ? `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&limit=${limit}&t=year`
-          : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=${limit}&t=year`;
-      const res = await fetch(url, { headers: { Accept: "application/json" } });
-      const data = await res.json();
-      for (const p of data?.data?.children || []) {
-        if (seen.has(p.data.id)) continue;
-        seen.add(p.data.id);
-        results.push({
-          site: "Reddit",
-          source: `Reddit r/${p.data.subreddit}`,
-          title: p.data.title,
-          text: (p.data.selftext || "").slice(0, 400),
-        });
-      }
-    } catch {}
+  try {
+    const res = await fetch(`/api/reddit?query=${encodeURIComponent(query)}&limit=${limit}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
   }
-  return results;
 }
 
 async function fetchHackerNewsPosts(query, limit = 100) {
   try {
-    const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(query)}&tags=comment,story&hitsPerPage=${limit}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    return (data?.hits || []).map((h) => ({
-      site: "Hacker News",
-      source: "Hacker News",
-      title: h.title || h.story_title || "",
-      text: (h.comment_text || h.story_text || "").replace(/<[^>]+>/g, "").slice(0, 400),
-    }));
+    const res = await fetch(`/api/hn?query=${encodeURIComponent(query)}&limit=${limit}`);
+    if (!res.ok) return [];
+    return await res.json();
   } catch {
     return [];
   }
