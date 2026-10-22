@@ -4,6 +4,7 @@ const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 
 async function fetchRedditPosts(query, limit = 100) {
   const results = [];
+  const seen = new Set();
   const subreddits = ["all", "browsers", "software"];
   for (const sub of subreddits) {
     try {
@@ -12,12 +13,16 @@ async function fetchRedditPosts(query, limit = 100) {
         : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=${limit}&t=year`;
       const res = await fetch(url, { headers: { "Accept": "application/json" } });
       const data = await res.json();
-      const posts = data?.data?.children?.map(p => ({
-        source: `Reddit r/${p.data.subreddit}`,
-        title: p.data.title,
-        text: (p.data.selftext || "").slice(0, 400),
-      })) || [];
-      results.push(...posts);
+      for (const p of data?.data?.children || []) {
+        if (seen.has(p.data.id)) continue;
+        seen.add(p.data.id);
+        results.push({
+          site: "Reddit",
+          source: `Reddit r/${p.data.subreddit}`,
+          title: p.data.title,
+          text: (p.data.selftext || "").slice(0, 400),
+        });
+      }
     } catch {}
   }
   return results;
@@ -29,6 +34,7 @@ async function fetchHackerNewsPosts(query, limit = 100) {
     const res = await fetch(url);
     const data = await res.json();
     return (data?.hits || []).map(h => ({
+      site: "Hacker News",
       source: "Hacker News",
       title: h.title || h.story_title || "",
       text: (h.comment_text || h.story_text || "").replace(/<[^>]+>/g, "").slice(0, 400),
@@ -42,6 +48,7 @@ async function fetchDevToPosts(query, limit = 100) {
     const res = await fetch(url);
     const data = await res.json();
     return (data || []).map(a => ({
+      site: "DEV.to",
       source: "DEV.to",
       title: a.title || "",
       text: (a.description || "").slice(0, 400),
@@ -58,26 +65,85 @@ async function gatherAllData(query) {
   return [...reddit, ...hn, ...devto];
 }
 
-function formatPosts(posts) {
-  return posts
-    .filter(p => p.title || p.text)
-    .map(p => `[${p.source}] ${p.title}${p.text ? ": " + p.text : ""}`)
-    .join("\n")
-    .slice(0, 20000);
+// Numbers posts for citation and stops at a whole-post boundary once maxChars
+// is reached, so the model is only ever shown complete posts and told exactly
+// how many were left out.
+function buildPromptData(posts, maxChars = 20000) {
+  const eligible = posts.filter(p => p.title || p.text);
+  const lines = [];
+  const includedPosts = [];
+  let totalChars = 0;
+  for (const p of eligible) {
+    const line = `[${includedPosts.length + 1}] [${p.source}] ${p.title}${p.text ? ": " + p.text : ""}`;
+    if (totalChars + line.length + 1 > maxChars) break;
+    lines.push(line);
+    includedPosts.push(p);
+    totalChars += line.length + 1;
+  }
+  const bySite = {};
+  for (const p of includedPosts) bySite[p.site] = (bySite[p.site] || 0) + 1;
+  return {
+    text: lines.join("\n"),
+    includedCount: includedPosts.length,
+    omittedCount: eligible.length - includedPosts.length,
+    bySite,
+  };
+}
+
+// Keeps only items the model backed with a citation into the numbered posts
+// we actually sent it, so unfounded claims never reach the UI.
+function groundedItems(items, includedCount) {
+  if (!Array.isArray(items)) return [];
+  const out = [];
+  for (const item of items) {
+    const text = typeof item === "string" ? item : item?.text;
+    const citedPostIds = Array.isArray(item?.citedPostIds) ? item.citedPostIds : [];
+    const grounded =
+      citedPostIds.length > 0 &&
+      citedPostIds.every(id => Number.isInteger(id) && id >= 1 && id <= includedCount);
+    if (text && grounded) out.push(text);
+  }
+  return out;
+}
+
+function finalizeProduct(raw, built) {
+  return {
+    name: raw?.name,
+    sentimentScore: raw?.sentimentScore ?? 0,
+    positive: raw?.positive ?? 0,
+    neutral: raw?.neutral ?? 0,
+    negative: raw?.negative ?? 0,
+    insufficientData: Boolean(raw?.insufficientData) || built.includedCount === 0,
+    summary: raw?.summary || "",
+    topPraises: groundedItems(raw?.topPraises, built.includedCount),
+    topComplaints: groundedItems(raw?.topComplaints, built.includedCount),
+    topThemes: groundedItems(raw?.topThemes, built.includedCount),
+    dataPoints: built.includedCount,
+    sourceBreakdown: built.bySite,
+  };
 }
 
 async function analyzeWithClaude(productA, productB, dataA, dataB, focus) {
-  const prompt = `You are a senior product analyst. Analyze user sentiment from Reddit, Hacker News, and DEV.to posts for two competing products. Even if data is limited, provide your best analysis based on what is available and your general knowledge of these products.
+  const A = buildPromptData(dataA);
+  const B = buildPromptData(dataB);
+
+  if (A.includedCount === 0 && B.includedCount === 0) {
+    throw new Error("No posts were found for either product. Try different search terms.");
+  }
+
+  const prompt = `You are a senior product analyst. Analyze user sentiment from Reddit, Hacker News, and DEV.to posts for two competing products.
+
+Base your analysis strictly on the numbered posts provided below — do not supplement with general knowledge about these products. For every entry in topPraises, topComplaints, and topThemes, cite the post numbers (citedPostIds) that actually support it; never invent a citation. If a product has too few posts to support a confident analysis, set insufficientData to true for it, leave its topPraises/topComplaints/topThemes empty, and say so plainly in the summary instead of guessing.
 
 Product A: ${productA}
 Product B: ${productB}
 Focus area: ${focus || "general user experience"}
 
-Data about ${productA} (${dataA.length} posts):
-${formatPosts(dataA)}
+Data about ${productA} (${A.includedCount} posts included${A.omittedCount > 0 ? `, ${A.omittedCount} more fetched but omitted for length` : ""}):
+${A.text || "(no posts found)"}
 
-Data about ${productB} (${dataB.length} posts):
-${formatPosts(dataB)}
+Data about ${productB} (${B.includedCount} posts included${B.omittedCount > 0 ? `, ${B.omittedCount} more fetched but omitted for length` : ""}):
+${B.text || "(no posts found)"}
 
 Respond ONLY with a JSON object, no preamble or markdown:
 {
@@ -87,11 +153,11 @@ Respond ONLY with a JSON object, no preamble or markdown:
     "positive": <0-100>,
     "neutral": <0-100>,
     "negative": <0-100>,
-    "topPraises": ["<phrase>", "<phrase>", "<phrase>"],
-    "topComplaints": ["<phrase>", "<phrase>", "<phrase>"],
-    "topThemes": ["<theme>", "<theme>", "<theme>"],
-    "summary": "<2 sentence summary>",
-    "dataPoints": <number>
+    "insufficientData": <true|false>,
+    "topPraises": [{"text": "<phrase>", "citedPostIds": [<post number>, ...]}],
+    "topComplaints": [{"text": "<phrase>", "citedPostIds": [<post number>, ...]}],
+    "topThemes": [{"text": "<theme>", "citedPostIds": [<post number>, ...]}],
+    "summary": "<2 sentence summary>"
   },
   "productB": {
     "name": "${productB}",
@@ -99,11 +165,11 @@ Respond ONLY with a JSON object, no preamble or markdown:
     "positive": <0-100>,
     "neutral": <0-100>,
     "negative": <0-100>,
-    "topPraises": ["<phrase>", "<phrase>", "<phrase>"],
-    "topComplaints": ["<phrase>", "<phrase>", "<phrase>"],
-    "topThemes": ["<theme>", "<theme>", "<theme>"],
-    "summary": "<2 sentence summary>",
-    "dataPoints": <number>
+    "insufficientData": <true|false>,
+    "topPraises": [{"text": "<phrase>", "citedPostIds": [<post number>, ...]}],
+    "topComplaints": [{"text": "<phrase>", "citedPostIds": [<post number>, ...]}],
+    "topThemes": [{"text": "<theme>", "citedPostIds": [<post number>, ...]}],
+    "summary": "<2 sentence summary>"
   },
   "competitive": {
     "winnerA": "<area where A wins>",
@@ -118,14 +184,20 @@ Respond ONLY with a JSON object, no preamble or markdown:
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
-      max_tokens: 1500,
+      max_tokens: 2000,
       messages: [{ role: "user", content: prompt }]
     })
   });
   const data = await res.json();
   const text = data.content.map(i => i.text || "").join("");
   const clean = text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
+  const parsed = JSON.parse(clean);
+
+  return {
+    productA: finalizeProduct(parsed.productA, A),
+    productB: finalizeProduct(parsed.productB, B),
+    competitive: parsed.competitive,
+  };
 }
 
 const getScoreLabel = (s) => s >= 70 ? "Positive" : s >= 45 ? "Mixed" : "Negative";
@@ -195,11 +267,16 @@ const ProductCard = ({ data, label }) => (
       <ScoreRing score={data.sentimentScore} label={data.name} />
     </div>
     <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "16px", alignItems: "center" }}>
-      <span style={{ fontSize: "10px", color: "#6b5440", fontWeight: "600" }}>{data.dataPoints || "~"} POSTS FROM:</span>
+      <span style={{ fontSize: "10px", color: "#6b5440", fontWeight: "600" }}>{data.dataPoints} POSTS REFERENCED:</span>
       {["Reddit", "Hacker News", "DEV.to"].map(s => (
-        <span key={s} style={{ background: "#fff", border: "1px solid #e8ddd0", borderRadius: "4px", padding: "2px 8px", fontSize: "10px", color: "#4a3520", fontWeight: "500" }}>{s}</span>
+        <span key={s} style={{ background: "#fff", border: "1px solid #e8ddd0", borderRadius: "4px", padding: "2px 8px", fontSize: "10px", color: "#4a3520", fontWeight: "500" }}>{s}: {data.sourceBreakdown?.[s] || 0}</span>
       ))}
     </div>
+    {data.insufficientData && (
+      <div style={{ background: "#fff1ef", border: "1px solid #fcd0c8", borderRadius: "8px", padding: "8px 12px", marginBottom: "16px", fontSize: "11px", color: "#e85d4a", fontWeight: "600" }}>
+        ⚠ Not enough posts were found for this product — treat this analysis with caution.
+      </div>
+    )}
     <p style={{ color: "#4a3520", fontSize: "13px", lineHeight: "1.7", marginBottom: "24px" }}>{data.summary}</p>
     <div style={{ marginBottom: "20px" }}>
       <div style={{ color: "#6b5440", fontSize: "11px", marginBottom: "10px", letterSpacing: "0.05em", fontWeight: "600" }}>SENTIMENT BREAKDOWN</div>
@@ -207,15 +284,27 @@ const ProductCard = ({ data, label }) => (
     </div>
     <div style={{ marginBottom: "16px" }}>
       <p style={{ color: "#6b5440", fontSize: "11px", marginBottom: "8px", fontWeight: "600" }}>✓ USERS LOVE</p>
-      <div>{data.topPraises.map((p, i) => <Tag key={i} text={p} type="praise" />)}</div>
+      <div>
+        {data.topPraises.length
+          ? data.topPraises.map((p, i) => <Tag key={i} text={p} type="praise" />)
+          : <span style={{ fontSize: "12px", color: "#c9b99a" }}>No verified praises found</span>}
+      </div>
     </div>
     <div style={{ marginBottom: "16px" }}>
       <p style={{ color: "#6b5440", fontSize: "11px", marginBottom: "8px", fontWeight: "600" }}>✗ PAIN POINTS</p>
-      <div>{data.topComplaints.map((c, i) => <Tag key={i} text={c} type="complaint" />)}</div>
+      <div>
+        {data.topComplaints.length
+          ? data.topComplaints.map((c, i) => <Tag key={i} text={c} type="complaint" />)
+          : <span style={{ fontSize: "12px", color: "#c9b99a" }}>No verified complaints found</span>}
+      </div>
     </div>
     <div>
       <p style={{ color: "#6b5440", fontSize: "11px", marginBottom: "8px", fontWeight: "600" }}># TOP THEMES</p>
-      <div>{data.topThemes.map((t, i) => <Tag key={i} text={t} type="theme" />)}</div>
+      <div>
+        {data.topThemes.length
+          ? data.topThemes.map((t, i) => <Tag key={i} text={t} type="theme" />)
+          : <span style={{ fontSize: "12px", color: "#c9b99a" }}>No verified themes found</span>}
+      </div>
     </div>
   </div>
 );
@@ -245,8 +334,8 @@ export default function App() {
       setStage("Analyzing with Claude...");
       const analysis = await analyzeWithClaude(productA, productB, dataA, dataB, focus);
       setResults(analysis);
-    } catch {
-      setError("Something went wrong. Please try again.");
+    } catch (e) {
+      setError(e?.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false); setStage("");
     }
