@@ -2,10 +2,58 @@ import http from "http";
 
 const PORT = 3001;
 
-// Reddit and Hacker News don't send CORS headers for third-party origins, so
-// these are fetched here (server-side) rather than from the browser. Mirrors
+// Reddit's anonymous .json endpoints block cloud/serverless IPs with a 403
+// bot-detection page regardless of headers, so this uses the OAuth API
+// instead (oauth.reddit.com), which isn't subject to that wall. Requires
+// REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET from a Reddit "script" app
+// (reddit.com/prefs/apps) set in the local environment. Mirrors
 // api/reddit.js and api/hn.js, which handle the same thing in production.
+
+let cachedToken = null;
+let cachedTokenExpiry = 0;
+
+async function getRedditAccessToken() {
+  const clientId = process.env.REDDIT_CLIENT_ID;
+  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error("REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET are not set");
+  }
+
+  if (cachedToken && Date.now() < cachedTokenExpiry) {
+    return cachedToken;
+  }
+
+  const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString("base64");
+  const response = await fetch("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "sentiment-analyzer/1.0 (local dev server)",
+    },
+    body: "grant_type=client_credentials",
+  });
+
+  const bodyText = await response.text();
+  if (!response.ok) {
+    throw new Error(`token request failed: HTTP ${response.status}: ${bodyText.slice(0, 300)}`);
+  }
+
+  const data = JSON.parse(bodyText);
+  cachedToken = data.access_token;
+  cachedTokenExpiry = Date.now() + (data.expires_in - 60) * 1000;
+  return cachedToken;
+}
+
 async function fetchRedditPosts(query, limit) {
+  let token;
+  try {
+    token = await getRedditAccessToken();
+  } catch (e) {
+    console.error(`[api/reddit] auth failed: ${e.message}`);
+    return [];
+  }
+
   const results = [];
   const seen = new Set();
   const subreddits = ["all", "browsers", "software"];
@@ -13,11 +61,11 @@ async function fetchRedditPosts(query, limit) {
     try {
       const url =
         sub === "all"
-          ? `https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&limit=${limit}&t=year`
-          : `https://www.reddit.com/r/${sub}/search.json?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=${limit}&t=year`;
+          ? `https://oauth.reddit.com/search?q=${encodeURIComponent(query)}&sort=relevance&limit=${limit}&t=year`
+          : `https://oauth.reddit.com/r/${sub}/search?q=${encodeURIComponent(query)}&restrict_sr=1&sort=relevance&limit=${limit}&t=year`;
       const response = await fetch(url, {
         headers: {
-          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
           "User-Agent": "sentiment-analyzer/1.0 (local dev server)",
         },
       });
