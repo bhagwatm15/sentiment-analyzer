@@ -266,12 +266,6 @@ const ProductCard = ({ data, label }) => (
       </div>
       <ScoreRing score={data.sentimentScore} label={data.name} />
     </div>
-    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "16px", alignItems: "center" }}>
-      <span style={{ fontSize: "10px", color: "#6b5440", fontWeight: "600" }}>{data.dataPoints} POSTS REFERENCED:</span>
-      {["Reddit", "Hacker News", "DEV.to"].map(s => (
-        <span key={s} style={{ background: "#fff", border: "1px solid #e8ddd0", borderRadius: "4px", padding: "2px 8px", fontSize: "10px", color: "#4a3520", fontWeight: "500" }}>{s}: {data.sourceBreakdown?.[s] || 0}</span>
-      ))}
-    </div>
     {data.insufficientData && (
       <div style={{ background: "#fff1ef", border: "1px solid #fcd0c8", borderRadius: "8px", padding: "8px 12px", marginBottom: "16px", fontSize: "11px", color: "#e85d4a", fontWeight: "600" }}>
         ⚠ Not enough posts were found for this product — treat this analysis with caution.
