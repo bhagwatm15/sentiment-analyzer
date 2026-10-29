@@ -310,7 +310,6 @@ export default function App() {
   const [stage, setStage] = useState("");
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
-  const [notes, setNotes] = useState("");
   const [dataStats, setDataStats] = useState(null);
 
   async function handleAnalyze() {
@@ -345,9 +344,9 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#f1f5f9", color: "#0f172a", padding: "40px 24px", fontFamily: "system-ui, sans-serif" }}>
       <style>{`
         * { box-sizing: border-box; }
-        input, textarea { outline: none; }
-        input::placeholder, textarea::placeholder { color: #94a3b8; }
-        input:focus, textarea:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
+        input { outline: none; }
+        input::placeholder { color: #94a3b8; }
+        input:focus { border-color: #6366f1 !important; box-shadow: 0 0 0 3px rgba(99,102,241,0.1); }
         .abtn:hover:not(:disabled) { background: #4338ca !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(79,70,229,0.3) !important; }
         .abtn:disabled { opacity: 0.4; cursor: not-allowed; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
@@ -418,12 +417,6 @@ export default function App() {
                   </div>
                 ))}
               </div>
-            </section>
-            <section style={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: "16px", padding: "28px", boxShadow: "0 1px 3px rgba(0,0,0,0.07)" }}>
-              <h3 style={{ fontSize: "16px", color: "#0f172a", fontWeight: "700", marginTop: 0, marginBottom: "6px" }}>My Recommendations</h3>
-              <p style={{ color: "#64748b", fontSize: "11px", fontWeight: "600", marginBottom: "14px", letterSpacing: "0.05em" }}>YOUR ANALYSIS BASED ON THE DATA ABOVE</p>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Based on the data, here's what I think the key opportunities are..." rows={5}
-                style={{ ...inputStyle, resize: "vertical", lineHeight: "1.7" }} />
             </section>
           </main>
         )}
